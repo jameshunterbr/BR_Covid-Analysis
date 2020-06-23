@@ -1,0 +1,149 @@
+---
+title: "Suspicious Cases in Brazilian MoS Data"
+author: "James Hunter, PhD, EPM, UNIFESP"
+date: '`r format(Sys.Date(), "%d %B %Y")`'
+output: 
+  html_document:
+    theme: flatly
+    df_print: paged
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+options(knitr.table.format = "html") 
+knitr::knit_hooks$set(mysize = function(before, options, envir) {
+  if (before) 
+    return(options$size)
+})
+options(scipen = 10)
+pacman::p_load(scales, tidyverse, lubridate, glue, here, ggpubr, 
+               ggsci, janitor, summarytools, knitr, kableExtra, 
+               data.table, patchwork)
+
+```
+
+## Records with Negative `cases_new` and `deaths_new`
+
+Take each of the June Ministry of Health files, identify the records that have negative values for `cases_new` and `deaths_new` in each of the 9 files downloaded as of June 23rd, test the consistency of these values. 
+
+Steps in the Process: 
+
+1.    Build a data frame of these negative value records
+2.    Make them sortable by which file they came from.
+3.    Include date, state, population variables, the latter because this too appeared to be a way to keep cases out of the totals.
+
+## Function to read in files to `br_data`  data table
+
+```{r f_read_file}
+read_rds <- function(file_date) {
+  file_name <- here(glue("data/br_data_", file_date, ".rds"))
+  df <- readRDS(file_name)
+  return(df)
+}
+```
+
+
+## Function to focus `br_data` only on those cases with negative values for `cases_new` or `deaths_new`
+
+```{r f_negative_cases}
+neg_vals <- function(br_data) {
+  neg_mins <- br_data %>% 
+    filter((cases_new < 0 | deaths_new < 0) & (mun == "" | (st == "SP" & mun != ""))) %>% 
+    select(reg, st, state_name, mun, date, cases_new, deaths_new)
+  glimpse(neg_mins)
+  return(neg_mins)
+}
+```
+
+## Set up tibbles `neg_records` to hold records across various files `neg_summary` for summaries of values by MoS file.
+
+```{r setup_dfs}
+neg_records <- tibble(file_day = character(),
+                      st = character(),
+                      mun = character(),
+                      date = character(),
+                      cases_new = integer(),
+                      deaths_new = integer())
+
+neg_summary <- tibble(file_day = character(),
+                      tot_neg_records = integer(),
+                      neg_cases_new = integer(),
+                      neg_deaths_new = integer())
+
+```
+
+## Put negative records from `neg_mins` into `neg_records` and update summary: `neg_summary`
+
+```{r f_neg_recs}
+
+neg_recs <- function(file_date, neg_mins){
+  tmp <- tibble(st = neg_mins$st,
+                mun = neg_mins$mun,
+                date = neg_mins$date,
+                cases_new = neg_mins$cases_new,
+                deaths_new = neg_mins$deaths_new)
+  tmp$file_day <- file_date
+  return(tmp)
+}
+
+neg_records <- rbind(neg_records, neg_recs(file_date, neg_mins))
+
+neg_tots <- neg_mins %>% 
+  summarise(neg_cases_new = sum(cases_new < 0),
+            neg_deaths_new = sum(deaths_new < 0))
+
+neg_summary <- neg_summary %>% 
+  add_case(file_day = file_date,
+           tot_neg_records = nrow(neg_mins),
+           neg_cases_new = as.integer(neg_tots$neg_cases_new),
+           neg_deaths_new = as.integer(neg_tots$neg_deaths_new))
+```
+
+## Set up `for` loop to process the files available
+
+```{r loop}
+file_dates <- c("2020-06-09",
+                "2020-06-10",
+                "2020-06-11",
+                "2020-06-16",
+                "2020-06-17",
+                "2020-06-18",
+                "2020-06-20",
+                "2020-06-21",
+                "2020-06-22")
+
+neg_records <- tibble(file_day = character(),
+                      st = character(),
+                      mun = character(),
+                      date = character(),
+                      cases_new = integer(),
+                      deaths_new = integer())
+
+neg_summary <- tibble(file_day = character(),
+                      tot_neg_records = integer(),
+                      neg_cases_new = integer(),
+                      neg_deaths_new = integer())
+
+for (i in seq_along(file_dates)) {
+  
+  br_data <- read_rds(file_dates[i])
+  neg_mins <- neg_vals(br_data)
+  neg_records <- rbind(neg_records, neg_recs(file_dates[i], neg_mins))
+
+  neg_tots <- neg_mins %>% 
+    summarise(neg_cases_new = sum(cases_new < 0),
+              neg_deaths_new = sum(deaths_new < 0))
+
+  neg_summary <- neg_summary %>% 
+    add_case(file_day = file_dates[i],
+           tot_neg_records = nrow(neg_mins),
+           neg_cases_new = as.integer(neg_tots$neg_cases_new),
+           neg_deaths_new = as.integer(neg_tots$neg_deaths_new))
+  
+}
+
+saveRDS(neg_records, here("data/June_neg_records.rds"))
+
+```
+
